@@ -1,0 +1,16 @@
+{
+  "name": "vorq-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "start:redis": "tsx src/redis-example.ts"
+  },
+  "dependencies": {
+    "@vorq/core": "file:../../packages/core",
+    "@vorq/redis": "file:../../packages/redis"
+  },
+  "devDependencies": {
+    "tsx": "4.19.0"
+  }
+}

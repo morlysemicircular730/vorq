@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Task {
+  id          String     @id @default(uuid())
+  queue       String
+  name        String
+  payload     Json
+  status      TaskStatus
+  priority    Int        @default(2)
+  result      Json?
+  error       String?
+  attempt     Int        @default(0)
+  maxRetries  Int        @default(3)
+  progress    Int        @default(0)
+  scheduleId  String?
+  createdAt   DateTime   @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  dependencies TaskDependency[] @relation("dependent")
+  dependents   TaskDependency[] @relation("dependency")
+  attempts     TaskAttempt[]
+
+  @@index([queue, status])
+  @@index([scheduleId])
+  @@index([status, createdAt])
+}
+
+model TaskDependency {
+  id          String @id @default(uuid())
+  taskId      String
+  dependsOnId String
+  task        Task   @relation("dependent", fields: [taskId], references: [id])
+  dependsOn   Task   @relation("dependency", fields: [dependsOnId], references: [id])
+
+  @@unique([taskId, dependsOnId])
+}
+
+model TaskAttempt {
+  id        String   @id @default(uuid())
+  taskId    String
+  attempt   Int
+  error     String?
+  startedAt DateTime
+  duration  Int
+  task      Task     @relation(fields: [taskId], references: [id])
+
+  @@index([taskId])
+}
+
+enum TaskStatus {
+  WAITING
+  PENDING
+  QUEUED
+  ACTIVE
+  COMPLETED
+  FAILED
+  RETRYING
+  ABANDONED
+}
